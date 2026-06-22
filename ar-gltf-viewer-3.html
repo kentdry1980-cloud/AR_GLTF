@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>GLTF AR Viewer</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0a0a0f; color:#e8e8f0;
+  font-family:'Helvetica Neue',Arial,sans-serif;
+  min-height:100vh; display:flex; flex-direction:column; align-items:center;
+}
+header {
+  width:100%; padding:16px 20px;
+  border-bottom:1px solid #1e1e2e;
+  display:flex; align-items:center; gap:10px;
+}
+.dot {
+  width:8px; height:8px; border-radius:50%;
+  background:#5b7fff; box-shadow:0 0 8px #5b7fff88; flex-shrink:0;
+}
+header h1 { font-size:13px; font-weight:500; letter-spacing:.09em; color:#8080a0; text-transform:uppercase; }
+
+#main { width:100%; max-width:480px; padding:24px 18px; display:flex; flex-direction:column; gap:16px; }
+
+/* Drop zone */
+#dropzone {
+  border:1.5px dashed #2a2a40; border-radius:12px;
+  padding:40px 20px; text-align:center; cursor:pointer;
+  background:#0d0d18; transition:border-color .2s,background .2s; position:relative;
+}
+#dropzone.drag-over { border-color:#5b7fff; background:#0f0f22; }
+#dropzone input { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+#dropzone .icon { font-size:34px; display:block; margin-bottom:10px; }
+#dropzone .label { font-size:14px; color:#7070a0; line-height:1.6; }
+#dropzone .label strong { color:#b0b0d0; display:block; }
+#dropzone .fmt { font-size:11px; color:#333350; margin-top:8px; letter-spacing:.04em; }
+
+/* Canvas */
+#canvas-wrap {
+  display:none; flex-direction:column; gap:12px;
+}
+#canvas-wrap.visible { display:flex; }
+#cv-container {
+  width:100%; aspect-ratio:4/3; border-radius:12px;
+  overflow:hidden; background:#080812; border:1px solid #1e1e2e; position:relative;
+}
+#cv-container canvas { width:100%!important; height:100%!important; display:block; touch-action:none; }
+.controls-hint { font-size:11px; color:#404060; text-align:center; }
+
+/* Buttons */
+.btn-row { display:flex; gap:10px; }
+button {
+  flex:1; padding:12px; border:none; border-radius:9px;
+  font-size:13px; font-weight:500; cursor:pointer; transition:opacity .15s;
+}
+#btn-ar { background:#5b7fff; color:#fff; }
+#btn-ar:disabled { opacity:.3; cursor:not-allowed; }
+#btn-reset { background:#141420; color:#7070a0; border:1px solid #2a2a3e; }
+
+/* Info / Status */
+#info { display:none; align-items:center; gap:8px; padding:10px 14px; background:#0d0d18; border-radius:8px; border:1px solid #1a1a2e; font-size:12px; color:#6060a0; }
+#info.visible { display:flex; }
+#info .name { color:#9090c0; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+#status { font-size:13px; color:#6060a0; text-align:center; padding:10px 14px; background:#0d0d18; border-radius:8px; border:1px solid #1a1a2e; display:none; }
+#status.visible { display:block; }
+#status.err { color:#ff6b6b; border-color:#2a1010; background:#100808; }
+#status.ok  { color:#6bffb8; border-color:#0a2a1a; background:#080f0a; }
+#ar-note { display:none; font-size:12px; color:#404055; text-align:center; line-height:1.7; }
+#ar-note.visible { display:block; }
+
+/* Loading overlay */
+#loading {
+  display:none; position:fixed; inset:0;
+  background:#0a0a0fdd; align-items:center; justify-content:center;
+  flex-direction:column; gap:14px; z-index:99;
+}
+#loading.visible { display:flex; }
+.spinner { width:32px; height:32px; border:2px solid #1e1e2e; border-top-color:#5b7fff; border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+#loading p { font-size:13px; color:#6060a0; }
+</style>
+</head>
+<body>
+
+<header><div class="dot"></div><h1>GLTF AR Viewer</h1></header>
+
+<div id="main">
+  <div id="dropzone">
+    <input type="file" id="file-input" accept=".gltf,.glb">
+    <span class="icon">📦</span>
+    <div class="label"><strong>GLB / GLTF ファイルを選択</strong>タップしてファイルを開く</div>
+    <div class="fmt">.glb &nbsp;/&nbsp; .gltf</div>
+  </div>
+
+  <div id="info"><span>📄</span><span class="name" id="fname"></span></div>
+  <div id="status"></div>
+
+  <div id="canvas-wrap">
+    <div id="cv-container"><canvas id="cv"></canvas></div>
+    <div class="controls-hint">1本指で回転 ・ ピンチでズーム ・ 2本指でパン</div>
+    <div class="btn-row">
+      <button id="btn-ar" disabled>📱 ARで表示</button>
+      <button id="btn-reset">↩ リセット</button>
+    </div>
+    <div id="ar-note"></div>
+  </div>
+</div>
+
+<div id="loading"><div class="spinner"></div><p id="load-msg">読み込み中...</p></div>
+
+<!-- Three.js r134 UMD (no ESM) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/loaders/DRACOLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// ── Elements ──────────────────────────────────────────────────
+const fileInput   = document.getElementById('file-input');
+const dropzone    = document.getElementById('dropzone');
+const canvasWrap  = document.getElementById('canvas-wrap');
+const cvContainer = document.getElementById('cv-container');
+const cv          = document.getElementById('cv');
+const statusEl    = document.getElementById('status');
+const infoEl      = document.getElementById('info');
+const fnameEl     = document.getElementById('fname');
+const btnAR       = document.getElementById('btn-ar');
+const btnReset    = document.getElementById('btn-reset');
+const loadingEl   = document.getElementById('loading');
+const loadMsgEl   = document.getElementById('load-msg');
+const arNote      = document.getElementById('ar-note');
+
+function showStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = 'visible ' + (type || '');
+}
+function clearStatus() { statusEl.className = ''; statusEl.textContent = ''; }
+function showLoading(msg) { loadMsgEl.textContent = msg || '読み込み中...'; loadingEl.classList.add('visible'); }
+function hideLoading() { loadingEl.classList.remove('visible'); }
+
+// ── Three.js setup ────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.xr.enabled = true;
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 1000);
+camera.position.set(0, 1, 3);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(3, 6, 4);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x8899ff, 0.3);
+fill.position.set(-3, 2, -4);
+scene.add(fill);
+
+// Grid
+scene.add(new THREE.GridHelper(6, 24, 0x181828, 0x181828));
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+
+function resize() {
+  const w = cvContainer.clientWidth;
+  const h = cvContainer.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(cvContainer);
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// ── GLTF Loader ───────────────────────────────────────────────
+const dracoLoader = new THREE.DRACOLoader();
+dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/libs/draco/');
+const gltfLoader = new THREE.GLTFLoader();
+gltfLoader.setDRACOLoader(dracoLoader);
+
+let currentModel = null;
+
+function loadGLTF(url, filename) {
+  showLoading('モデルを読み込み中...');
+  if (currentModel) { scene.remove(currentModel); currentModel = null; }
+
+  gltfLoader.load(
+    url,
+    (gltf) => {
+      hideLoading();
+      currentModel = gltf.scene;
+      scene.add(currentModel);
+
+      // Auto center & scale
+      const box    = new THREE.Box3().setFromObject(currentModel);
+      const size   = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const scale  = 1.5 / maxDim;
+      currentModel.scale.setScalar(scale);
+      currentModel.position.copy(center.multiplyScalar(-scale));
+      currentModel.position.y += size.y * scale * 0.5;
+
+      const top = size.y * scale;
+      camera.position.set(0, top * 0.6, top * 2.5);
+      controls.target.set(0, top * 0.5, 0);
+      controls.update();
+
+      // Show UI
+      dropzone.style.display = 'none';
+      canvasWrap.classList.add('visible');
+      infoEl.classList.add('visible');
+      fnameEl.textContent = filename;
+      resize();
+
+      showStatus('✓ 読み込み完了', 'ok');
+      setTimeout(clearStatus, 2500);
+
+      checkAR();
+    },
+    (prog) => {
+      if (prog.total > 0) {
+        loadMsgEl.textContent = '読み込み中... ' + Math.round(prog.loaded / prog.total * 100) + '%';
+      }
+    },
+    (err) => {
+      hideLoading();
+      console.error(err);
+      showStatus('⚠ 読み込みエラー: ' + (err.message || 'ファイルを確認してください'), 'err');
+    }
+  );
+}
+
+// ── File handling ─────────────────────────────────────────────
+function handleFile(file) {
+  if (!file) return;
+  if (!/\.(glb|gltf)$/i.test(file.name)) {
+    showStatus('⚠ .glb または .gltf ファイルを選んでください', 'err');
+    return;
+  }
+  clearStatus();
+  loadGLTF(URL.createObjectURL(file), file.name);
+}
+
+fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+dropzone.addEventListener('dragover',  (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', ()  => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop',      (e) => { e.preventDefault(); dropzone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
+
+// ── Reset ─────────────────────────────────────────────────────
+btnReset.addEventListener('click', () => {
+  if (currentModel) { scene.remove(currentModel); currentModel = null; }
+  canvasWrap.classList.remove('visible');
+  infoEl.classList.remove('visible');
+  arNote.classList.remove('visible');
+  dropzone.style.display = '';
+  btnAR.disabled = true;
+  clearStatus();
+  fileInput.value = '';
+});
+
+// ── WebXR AR ──────────────────────────────────────────────────
+function checkAR() {
+  if (!navigator.xr) {
+    arNote.textContent = 'このブラウザはWebXR非対応です（Android Chrome + HTTPS が必要）';
+    arNote.classList.add('visible');
+    return;
+  }
+  navigator.xr.isSessionSupported('immersive-ar').then((ok) => {
+    if (ok) {
+      btnAR.disabled = false;
+      arNote.classList.remove('visible');
+    } else {
+      arNote.textContent = 'AR非対応環境です。Android Chrome + HTTPS で開いてください。';
+      arNote.classList.add('visible');
+    }
+  });
+}
+
+btnAR.addEventListener('click', async () => {
+  try {
+    showLoading('ARセッション開始中...');
+
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: document.body }
+    });
+
+    await renderer.xr.setSession(session);
+
+    // Reticle
+    const reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.06, 0.075, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x5b7fff, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // Hit-test source を事前に1回だけ取得
+    const viewerSpace = await session.requestReferenceSpace('viewer');
+    const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+    const localFloor = await session.requestReferenceSpace('local-floor').catch(() => null);
+
+    hideLoading();
+    showStatus('床面を検出中... 床にカメラを向けてください', '');
+
+    let placed = false;
+
+    session.addEventListener('select', () => {
+      if (reticle.visible && currentModel && !placed) {
+        reticle.matrix.decompose(currentModel.position, currentModel.quaternion, new THREE.Vector3());
+        currentModel.scale.setScalar(1.5 / Math.max(...['x','y','z'].map(a => new THREE.Box3().setFromObject(currentModel).getSize(new THREE.Vector3())[a])) || 1);
+        placed = true;
+        reticle.visible = false;
+        clearStatus();
+      }
+    });
+
+    session.addEventListener('end', () => {
+      hitTestSource.cancel();
+      scene.remove(reticle);
+      placed = false;
+      hideLoading();
+      clearStatus();
+      // 3Dプレビュー用にアニメーションループを戻す
+      renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+    });
+
+    const xrRefSpace = renderer.xr.getReferenceSpace();
+
+    renderer.setAnimationLoop((t, frame) => {
+      if (!frame) { renderer.render(scene, camera); return; }
+
+      if (!placed) {
+        const hits = frame.getHitTestResults(hitTestSource);
+        if (hits.length > 0) {
+          const pose = hits[0].getPose(xrRefSpace);
+          if (pose) {
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
+          }
+        } else {
+          reticle.visible = false;
+        }
+      }
+
+      renderer.render(scene, camera);
+    });
+
+  } catch (e) {
+    hideLoading();
+    showStatus('⚠ AR起動エラー: ' + e.message, 'err');
+    console.error(e);
+  }
+});
+</script>
+</body>
+</html>
