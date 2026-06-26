@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>精密寸法チェッカー (数値直接入力版)</title>
+    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+    <style>
+        body { margin: 0; font-family: sans-serif; background-color: #f5f5f5; overflow: hidden; }
+        
+        model-viewer { width: 100vw; height: 100vh; }
+
+        /* --- 最初の画面のUI --- */
+        #ui-container {
+            position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+            z-index: 10; background: rgba(255, 255, 255, 0.95); padding: 12px 20px;
+            border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            text-align: center; width: 80%; max-width: 400px;
+        }
+        #file-input { display: none; }
+        .custom-button {
+            display: inline-block; padding: 10px 20px; background-color: #28a745;
+            color: white; border-radius: 6px; font-weight: bold; cursor: pointer; margin-bottom: 8px;
+        }
+        #file-name { font-size: 12px; color: #666; word-break: break-all; }
+
+        /* --- ARビュー用パネル全体 --- */
+        #size-panel {
+            position: absolute; top: 16px; left: 16px;
+            background: rgba(0, 0, 0, 0.85); color: white;
+            border-radius: 12px; font-size: 14px; line-height: 1.5;
+            z-index: 20; pointer-events: none; 
+            display: none; 
+            width: 250px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        model-viewer.xr-ar #size-panel {
+            display: block !important;
+        }
+
+        /* --- 折りたたみ用ヘッダー --- */
+        #panel-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 16px; background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 12px 12px 0 0; pointer-events: auto; cursor: pointer;
+        }
+        #panel-header.collapsed { border-radius: 12px; }
+        #panel-title { font-weight: bold; font-size: 16px; margin: 0; }
+        #toggle-btn { font-size: 12px; padding: 4px 8px; background: #555; border-radius: 4px; }
+
+        /* --- パネルの中身 --- */
+        #panel-content {
+            padding: 16px; max-height: 60vh; overflow-y: auto; pointer-events: auto;
+        }
+
+        /* 入力要素の有効化 */
+        input[type="range"], input[type="radio"], input[type="number"], label {
+            pointer-events: auto; cursor: pointer;
+        }
+        input[type="range"] { width: 100%; margin-top: 4px; margin-bottom: 12px; }
+        label { display: inline-block; margin-right: 10px; margin-bottom: 8px; }
+
+        /* タイトルと入力欄を横並びにするレイアウト */
+        .ui-row {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 4px;
+        }
+
+        /* 数値入力ボックスのスタイル */
+        input[type="number"] {
+            width: 65px; background: #333; color: white; border: 1px solid #555;
+            border-radius: 4px; padding: 3px 6px; text-align: right; font-size: 14px;
+        }
+        /* スピンボタン（上下の小さな矢印）を常に表示 */
+        input[type="number"]::-webkit-inner-spin-button { opacity: 1; }
+
+        .panel-heading { font-weight: bold; color: #4CAF50; margin-bottom: 6px; font-size: 15px; }
+        hr { margin: 12px 0; border: 0; border-top: 1px solid #555; }
+
+        /* AR起動ボタン */
+        #ar-button {
+            position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+            padding: 16px 32px; background-color: #007bff; color: white;
+            border: none; border-radius: 25px; font-size: 16px; font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2); cursor: pointer; display: none; z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <label for="file-input" class="custom-button">📂 GLBファイルを選択</label>
+        <input type="file" id="file-input" accept=".glb">
+        <div id="file-name">ファイルが選択されていません</div>
+    </div>
+
+    <model-viewer 
+        id="viewer"
+        ar 
+        ar-modes="webxr" 
+        ar-scale="fixed"
+        ar-placement="floor"
+        dom-overlay="size-panel" 
+        camera-controls 
+        touch-action="none" 
+        alt="3Dモデル">
+        
+        <div id="size-panel">
+            <div id="panel-header">
+                <span id="panel-title">操作パネル</span>
+                <span id="toggle-btn">▼ 閉じる</span>
+            </div>
+
+            <div id="panel-content">
+                
+                <div class="panel-heading">配置モード</div>
+                <label><input type="radio" name="placement" value="floor" checked> 床 (固定)</label>
+                <label><input type="radio" name="placement" value="wall"> 壁 (高さ自由)</label>
+                
+                <hr>
+
+                <div class="panel-heading">寸法情報 (実寸換算)</div>
+                <div class="ui-row"><span>↔ 幅(X):</span><span><span id="size-w">0.0</span> cm</span></div>
+                <div class="ui-row"><span>↕ 高さ(Y):</span><span><span id="size-h">0.0</span> cm</span></div>
+                <div class="ui-row"><span>↙ 奥行(Z):</span><span><span id="size-d">0.0</span> cm</span></div>
+                
+                <hr>
+                
+                <div class="panel-heading">サイズ調整</div>
+                <div class="ui-row">
+                    <span>倍率:</span>
+                    <span><input type="number" id="scale-input" min="0.1" max="3.0" step="0.05" value="1.00"> 倍</span>
+                </div>
+                <input type="range" id="scale-slider" min="0.1" max="3.0" step="0.05" value="1.0">
+
+                <hr>
+
+                <div class="panel-heading">角度調整</div>
+                
+                <div class="ui-row">
+                    <span>縦回転(X軸):</span>
+                    <span><input type="number" id="rot-x-input" min="-180" max="180" value="0"> °</span>
+                </div>
+                <input type="range" id="rot-x-slider" min="-180" max="180" step="1" value="0">
+
+                <div class="ui-row">
+                    <span>横回転(Y軸):</span>
+                    <span><input type="number" id="rot-y-input" min="-180" max="180" value="0"> °</span>
+                </div>
+                <input type="range" id="rot-y-slider" min="-180" max="180" step="1" value="0">
+
+                <div class="ui-row">
+                    <span>傾き(Z軸):</span>
+                    <span><input type="number" id="rot-z-input" min="-180" max="180" value="0"> °</span>
+                </div>
+                <input type="range" id="rot-z-slider" min="-180" max="180" step="1" value="0">
+            </div>
+        </div>
+
+        <button slot="ar-button" id="ar-button">
+            📦 ARで配置・サイズ確認
+        </button>
+    </model-viewer>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const fileNameDiv = document.getElementById('file-name');
+        const viewer = document.getElementById('viewer');
+        const arButton = document.getElementById('ar-button');
+        const sizePanel = document.getElementById('size-panel');
+        const uiContainer = document.getElementById('ui-container');
+        
+        const panelHeader = document.getElementById('panel-header');
+        const panelContent = document.getElementById('panel-content');
+        const toggleBtn = document.getElementById('toggle-btn');
+        const placementRadios = document.querySelectorAll('input[name="placement"]');
+
+        // スライダーとインプットの要素を両方取得
+        const scaleSlider = document.getElementById('scale-slider');
+        const scaleInput = document.getElementById('scale-input');
+        const rotXSlider = document.getElementById('rot-x-slider');
+        const rotXInput = document.getElementById('rot-x-input');
+        const rotYSlider = document.getElementById('rot-y-slider');
+        const rotYInput = document.getElementById('rot-y-input');
+        const rotZSlider = document.getElementById('rot-z-slider');
+        const rotZInput = document.getElementById('rot-z-input');
+
+        let baseDimensions = { x: 0, y: 0, z: 0 };
+
+        // --- パネルの開閉 ---
+        panelHeader.addEventListener('click', () => {
+            if (panelContent.style.display === 'none') {
+                panelContent.style.display = 'block';
+                toggleBtn.textContent = '▼ 閉じる';
+                panelHeader.classList.remove('collapsed');
+            } else {
+                panelContent.style.display = 'none';
+                toggleBtn.textContent = '▲ 開く';
+                panelHeader.classList.add('collapsed');
+            }
+        });
+
+        // --- 配置モード（床/壁）切り替え ---
+        placementRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                viewer.setAttribute('ar-placement', e.target.value);
+            });
+        });
+
+        // --- ファイル読み込み ---
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                fileNameDiv.textContent = file.name;
+                viewer.src = URL.createObjectURL(file);
+                arButton.style.display = 'block';
+                resetControls();
+            }
+        });
+
+        viewer.addEventListener('load', () => {
+            baseDimensions = viewer.getDimensions();
+            sizePanel.style.display = 'block';
+            uiContainer.style.display = 'none';
+            updateSizeDisplay(1.0);
+        });
+
+        function resetControls() {
+            scaleSlider.value = 1.0; scaleInput.value = "1.00";
+            rotXSlider.value = 0; rotXInput.value = 0;
+            rotYSlider.value = 0; rotYInput.value = 0;
+            rotZSlider.value = 0; rotZInput.value = 0;
+            viewer.orientation = "0deg 0deg 0deg";
+            placementRadios[0].checked = true;
+            viewer.setAttribute('ar-placement', 'floor');
+        }
+
+        // --- ① サイズ（倍率）の双方向連動処理 ---
+        function applyScale(scale) {
+            viewer.scale = `${scale} ${scale} ${scale}`;
+            updateSizeDisplay(scale);
+        }
+        scaleSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            scaleInput.value = val.toFixed(2); // インプット側に反映
+            applyScale(val);
+        });
+        scaleInput.addEventListener('input', (e) => {
+            let val = parseFloat(e.target.value);
+            if (isNaN(val)) return;
+            if (val < 0.1) val = 0.1; if (val > 3.0) val = 3.0; // 制限値
+            scaleSlider.value = val; // スライダー側に反映
+            applyScale(val);
+        });
+
+        // --- ② 角度（回転）の双方向連動処理 ---
+        function applyRotation() {
+            const x = rotXSlider.value;
+            const y = rotYSlider.value;
+            const z = rotZSlider.value;
+            viewer.orientation = `${x}deg ${y}deg ${z}deg`;
+        }
+
+        // X軸（縦回転）
+        rotXSlider.addEventListener('input', (e) => {
+            rotXInput.value = e.target.value;
+            applyRotation();
+        });
+        rotXInput.addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (isNaN(val)) return;
+            if (val < -180) val = -180; if (val > 180) val = 180;
+            rotXSlider.value = val;
+            applyRotation();
+        });
+
+        // Y軸（横回転）
+        rotYSlider.addEventListener('input', (e) => {
+            rotYInput.value = e.target.value;
+            applyRotation();
+        });
+        rotYInput.addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (isNaN(val)) return;
+            if (val < -180) val = -180; if (val > 180) val = 180;
+            rotYSlider.value = val;
+            applyRotation();
+        });
+
+        // Z軸（傾き）
+        rotZSlider.addEventListener('input', (e) => {
+            rotZInput.value = e.target.value;
+            applyRotation();
+        });
+        rotZInput.addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (isNaN(val)) return;
+            if (val < -180) val = -180; if (val > 180) val = 180;
+            rotZSlider.value = val;
+            applyRotation();
+        });
+
+        // 寸法表示の更新
+        function updateSizeDisplay(scale) {
+            if (baseDimensions.x === 0) return;
+            const widthCm = (baseDimensions.x * scale * 100).toFixed(1);
+            const heightCm = (baseDimensions.y * scale * 100).toFixed(1);
+            const depthCm = (baseDimensions.z * scale * 100).toFixed(1);
+            document.getElementById('size-w').textContent = widthCm;
+            document.getElementById('size-h').textContent = heightCm;
+            document.getElementById('size-d').textContent = depthCm;
+        }
+    </script>
+</body>
+</html>
